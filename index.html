@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地獄飛鏢手 - 惡魔深淵試煉</title>
+    <style>
+        /* CSS 樣式設定：暗黑地獄風與全螢幕置中佈局 */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #050203;
+            color: #ffcccc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            cursor: crosshair; /* 隱藏系統游標，使用自訂準心 */
+        }
+        
+        /* 遊戲標題霓虹光暈 */
+        h1 {
+            font-size: 2.4rem;
+            color: #ff3333;
+            text-shadow: 0 0 10px #ff0000, 0 0 25px #aa0000, 0 0 40px #ff3300;
+            margin-bottom: 8px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+        }
+        
+        /* 頂部戰況計分板 */
+        .game-info {
+            display: flex;
+            gap: 35px;
+            font-size: 1.15rem;
+            margin-bottom: 12px;
+            background: rgba(25, 5, 8, 0.85);
+            padding: 10px 25px;
+            border-radius: 10px;
+            border: 1px solid #771111;
+            box-shadow: inset 0 0 15px rgba(255, 0, 0, 0.35), 0 0 15px rgba(100, 0, 0, 0.5);
+        }
+        .info-item span {
+            color: #ffcc00;
+            font-weight: bold;
+            text-shadow: 0 0 8px rgba(255, 204, 0, 0.6);
+        }
+
+        /* 畫布容器與深淵紅光邊框 */
+        .canvas-container {
+            position: relative;
+            box-shadow: 0 0 40px #590000, 0 0 80px #1f0000;
+            border: 3px solid #881111;
+            border-radius: 14px;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            background: radial-gradient(circle at center, #24050a 0%, #0a0204 70%, #000000 100%);
+        }
+
+        /* 底部操作指引說明 */
+        .instructions {
+            margin-top: 12px;
+            font-size: 0.95rem;
+            color: #bb8888;
+            text-align: center;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 遊戲標題 -->
+    <h1>HELL'S DART : INFERNAL AIM</h1>
+    
+    <!-- 戰況數據面板 -->
+    <div class="game-info">
+        <div class="info-item">分數: <span id="scoreVal">0</span></div>
+        <div class="info-item">剩餘飛鏢: <span id="dartsVal">10</span></div>
+        <div class="info-item">連擊 (Combo): <span id="comboVal">0</span></div>
+    </div>
+
+    <!-- 遊戲主畫布容器 -->
+    <div class="canvas-container">
+        <canvas id="gameCanvas" width="850" height="600"></canvas>
+    </div>
+
+    <!-- 底部操作提示 -->
+    <div class="instructions">
+        移動滑鼠自由瞄準 ➔ 點擊滑鼠左鍵發射烈焰飛鏢！命中正中心紅心可獲 500 分最高暴擊！
+    </div>
+
+    <script>
+        // 取得 Canvas 畫布與 2D 繪圖內容
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 取得介面計分顯示元素
+        const scoreEl = document.getElementById('scoreVal');
+        const dartsEl = document.getElementById('dartsVal');
+        const comboEl = document.getElementById('comboVal');
+
+        // 遊戲狀態變數宣告
+        let score = 0;
+        let dartsLeft = 10;
+        let combo = 0;
+        let isGameOver = false;
+
+        // 滑鼠游標即時座標
+        let mouseX = canvas.width / 2;
+        let mouseY = canvas.height / 2;
+
+        // 惡魔靶盤物件（利用雙重正弦函數達成畫面上大範圍動態飄移）
+        let target = {
+            x: canvas.width / 2,
+            y: 200,
+            baseX: canvas.width / 2,
+            baseY: 230,
+            radius: 95,           // 靶盤總半徑
+            angleX: 0,            // X軸運動相位
+            angleY: 0,            // Y軸運動相位
+            speedX: 0.025,        // X軸移動速率
+            speedY: 0.035,        // Y軸移動速率
+            rangeX: 280,          // X軸水平移動大範圍
+            rangeY: 110           // Y軸垂直移動大範圍
+        };
+
+        // 飛鏢飛行與特效陣列
+        let activeDart = null;      // 當前飛行中的飛鏢
+        let particles = [];         // 爆炸與命中火花粒子陣列
+        let backgroundSparks = [];  // 背景上升地獄火星陣列
+
+        // 初始化背景地獄火星粒子
+        for (let i = 0; i < 70; i++) {
+            backgroundSparks.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                radius: Math.random() * 2.2 + 0.5,
+                speedY: -(Math.random() * 1.8 + 0.6),
+                speedX: (Math.random() - 0.5) * 0.9,
+                alpha: Math.random() * 0.75 + 0.25
+            });
+        }
+
+        // 監聽滑鼠移動以即時更新準心座標
+        window.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouseX = e.clientX - rect.left;
+            mouseY = e.clientY - rect.top;
+        });
+
+        // 監聽滑鼠點擊左鍵以發射飛鏢或重新開始遊戲
+        window.addEventListener('mousedown', (e) => {
+            if (e.button === 0 && !activeDart && dartsLeft > 0 && !isGameOver) {
+                shootDart();
+            } else if (isGameOver && e.button === 0) {
+                resetGame();
+            }
+        });
+
+        // 發射飛鏢邏輯：由畫面底部中央朝滑鼠瞄準方向射出
+        function shootDart() {
+            const startX = canvas.width / 2;
+            const startY = canvas.height - 25;
+            
+            const dx = mouseX - startX;
+            const dy = mouseY - startY;
+            const distance = Math.hypot(dx, dy);
+            
+            const speed = 19;
+            const vx = (dx / distance) * speed;
+            const vy = (dy / distance) * speed;
+
+            activeDart = {
+                x: startX,
+                y: startY,
+                vx: vx,
+                vy: vy,
+                trail: [] // 飛鏢飛行火焰殘影
+            };
+
+            dartsLeft--;
+            dartsEl.innerText = dartsLeft;
+        }
+
+        // 重設遊戲狀態
+        function resetGame() {
+            score = 0;
+            dartsLeft = 10;
+            combo = 0;
+            isGameOver = false;
+            scoreEl.innerText = score;
+            dartsEl.innerText = dartsLeft;
+            comboEl.innerText = combo;
+            activeDart = null;
+            particles = [];
+        }
+
+        // 建立爆炸與命中特效粒子函式
+        function createExplosion(x, y, color, count = 30) {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = Math.random() * 7 + 1.2;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    radius: Math.random() * 3.5 + 1,
+                    color: color,
+                    alpha: 1,
+                    decay: Math.random() * 0.025 + 0.015
+                });
+            }
+        }
+
+        // 更新遊戲物理與狀態
+        function update() {
+            // 1. 更新背景地獄上升火星
+            backgroundSparks.forEach(spark => {
+                spark.y += spark.speedY;
+                spark.x += spark.speedX;
+                if (spark.y < 0) {
+                    spark.y = canvas.height;
+                    spark.x = Math.random() * canvas.width;
+                }
+            });
+
+            // 2. 更新惡魔標靶位置（利用正弦波在畫面上流暢大範圍移動）
+            target.angleX += target.speedX;
+            target.angleY += target.speedY;
+            target.x = target.baseX + Math.sin(target.angleX) * target.rangeX;
+            target.y = target.baseY + Math.sin(target.angleY) * target.rangeY;
+
+            // 3. 更新飛行中的飛鏢與碰撞檢測
+            if (activeDart) {
+                activeDart.trail.push({ x: activeDart.x, y: activeDart.y });
+                if (activeDart.trail.length > 10) activeDart.trail.shift();
+
+                activeDart.x += activeDart.vx;
+                activeDart.y += activeDart.vy;
+
+                // 計算飛鏢與標靶中心的距離
+                const distToTarget = Math.hypot(activeDart.x - target.x, activeDart.y - target.y);
+                
+                if (distToTarget <= target.radius) {
+                    // 命中標靶！根據距離中心遠近進行環狀計分
+                    let hitScore = 0;
+                    let hitColor = '#ff3300';
+
+                    if (distToTarget <= 14) {
+                        hitScore = 500; // 黃金正中心紅心 (Bullseye)
+                        hitColor = '#ffea00';
+                        createExplosion(activeDart.x, activeDart.y, '#ffea00', 45);
+                    } else if (distToTarget <= 38) {
+                        hitScore = 200; // 內環
+                        hitColor = '#ff6600';
+                        createExplosion(activeDart.x, activeDart.y, '#ff6600', 25);
+                    } else if (distToTarget <= 68) {
+                        hitScore = 100; // 中環
+                        hitColor = '#cc0000';
+                        createExplosion(activeDart.x, activeDart.y, '#cc0000', 18);
+                    } else {
+                        hitScore = 50;  // 外環
+                        hitColor = '#990000';
+                        createExplosion(activeDart.x, activeDart.y, '#990000', 12);
+                    }
+
+                    combo++;
+                    let bonus = hitScore + (combo * 20); // Combo 連擊加成
+                    score += bonus;
+                    
+                    scoreEl.innerText = score;
+                    comboEl.innerText = combo;
+
+                    activeDart = null;
+
+                    // 檢查飛鏢是否用盡
+                    if (dartsLeft <= 0) {
+                        isGameOver = true;
+                    }
+                } 
+                // 若飛出邊界則判定未中 (Miss)
+                else if (activeDart.x < 0 || activeDart.x > canvas.width || activeDart.y < 0 || activeDart.y > canvas.height) {
+                    activeDart = null;
+                    combo = 0; // 斷開連擊
+                    comboEl.innerText = combo;
+
+                    if (dartsLeft <= 0) {
+                        isGameOver = true;
+                    }
+                }
+            }
+
+            // 4. 更新爆炸與火花特效粒子
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.alpha -= p.decay;
+                if (p.alpha <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        // 畫面渲染繪製函式
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 1. 繪製暗紅漸層地獄背景與光暈
+            const grad = ctx.createRadialGradient(canvas.width / 2, canvas.height + 120, 60, canvas.width / 2, canvas.height / 2, 650);
+            grad.addColorStop(0, '#420308');
+            grad.addColorStop(0.6, '#0f0204');
+            grad.addColorStop(1, '#020001');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製背景上升火星
+            backgroundSparks.forEach(spark => {
+                ctx.fillStyle = `rgba(255, 130, 60, ${spark.alpha})`;
+                ctx.beginPath();
+                ctx.arc(spark.x, spark.y, spark.radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // 2. 繪製大範圍浮動的惡魔標靶
+            drawTarget(target.x, target.y, target.radius);
+
+            // 3. 繪製飛行中的烈焰飛鏢與尾跡
+            if (activeDart) {
+                // 繪製火焰殘影
+                for (let i = 0; i < activeDart.trail.length; i++) {
+                    let point = activeDart.trail[i];
+                    let ratio = i / activeDart.trail.length;
+                    ctx.fillStyle = `rgba(255, ${Math.floor(120 * ratio)}, 0, ${ratio * 0.55})`;
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 4.5 * ratio, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // 繪製飛鏢本體
+                ctx.save();
+                ctx.translate(activeDart.x, activeDart.y);
+                let angle = Math.atan2(activeDart.vy, activeDart.vx);
+                ctx.rotate(angle);
+                
+                ctx.fillStyle = '#ff3300';
+                ctx.shadowBlur = 18;
+                ctx.shadowColor = '#ff0000';
+                ctx.beginPath();
+                ctx.moveTo(14, 0);
+                ctx.lineTo(-9, -7);
+                ctx.lineTo(-5, 0);
+                ctx.lineTo(-9, 7);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // 4. 繪製爆炸粒子
+            particles.forEach(p => {
+                ctx.save();
+                ctx.globalAlpha = p.alpha;
+                ctx.fillStyle = p.color;
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            });
+
+            // 5. 繪製瞄準引導線與自訂紅色十字準心
+            if (!isGameOver) {
+                const startX = canvas.width / 2;
+                const startY = canvas.height - 25;
+
+                // 繪製從底部發射點延伸至滑鼠游標的虛線軌跡指引
+                ctx.strokeStyle = 'rgba(255, 60, 60, 0.3)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(mouseX, mouseY);
+                ctx.stroke();
+                ctx.setLineDash([]); // 重置虛線
+
+                // 繪製紅色十字準心 (Crosshair)
+                ctx.strokeStyle = '#ff3333';
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = '#ff0000';
+                
+                ctx.beginPath();
+                ctx.arc(mouseX, mouseY, 14, 0, Math.PI * 2);
+                ctx.moveTo(mouseX - 20, mouseY); ctx.lineTo(mouseX - 7, mouseY);
+                ctx.moveTo(mouseX + 7, mouseY); ctx.lineTo(mouseX + 20, mouseY);
+                ctx.moveTo(mouseX, mouseY - 20); ctx.lineTo(mouseX, mouseY - 7);
+                ctx.moveTo(mouseX, mouseY + 7); ctx.lineTo(mouseX, mouseY + 20);
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            // 6. 遊戲結束結算畫面
+            if (isGameOver) {
+                ctx.fillStyle = 'rgba(12, 2, 4, 0.88)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#ff3333';
+                ctx.font = 'bold 40px Segoe UI';
+                ctx.shadowBlur = 22;
+                ctx.shadowColor = '#ff0000';
+                ctx.fillText('地獄試煉結束', canvas.width / 2, canvas.height / 2 - 45);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '24px Segoe UI';
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = '#ffffff';
+                ctx.fillText(`最終審判得分: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
+
+                ctx.fillStyle = '#ffcc00';
+                ctx.font = '17px Segoe UI';
+                ctx.shadowBlur = 6;
+                ctx.shadowColor = '#ffcc00';
+                ctx.fillText('點擊滑鼠任意處重新挑戰深淵', canvas.width / 2, canvas.height / 2 + 65);
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // 繪製惡魔標靶（多層環狀結構與尖角惡魔裝飾）
+        function drawTarget(x, y, radius) {
+            ctx.save();
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = '#ff1a1a';
+
+            // 外環 (血紅深淵)
+            ctx.fillStyle = '#520000';
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ff3333';
+            ctx.lineWidth = 3.5;
+            ctx.stroke();
+
+            // 中環 (暗黑交錯)
+            ctx.fillStyle = '#2b0000';
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 0.72, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#aa0000';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 內環 (熔岩紅)
+            ctx.fillStyle = '#730000';
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 0.44, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#ff6600';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 紅心區 (Bullseye)
+            ctx.fillStyle = '#ff3300';
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 0.18, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 極致正中心金色核心
+            ctx.fillStyle = '#ffff00';
+            ctx.beginPath();
+            ctx.arc(x, y, radius * 0.075, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 頂部惡魔尖角裝飾
+            ctx.strokeStyle = '#ff3333';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(x - 16, y - radius);
+            ctx.lineTo(x, y - radius - 18);
+            ctx.lineTo(x + 16, y - radius);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        // 遊戲主迴圈
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 啟動遊戲迴圈
+        gameLoop();
+    </script>
+</body>
+</html>
